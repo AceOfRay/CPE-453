@@ -30,7 +30,8 @@ void usage(const char *prog)
 {
     fprintf(stderr,
             "Usage: %s quantum prog1 [args] : prog2 [args] : ...\n"
-            "  quantum is in milliseconds\n",
+            "  quantum is in milliseconds\n"
+            "  progN may be ./progN or just progN if it is executable in the current directory\n",
             prog);
 }
 
@@ -60,6 +61,31 @@ char *xstrdup(const char *s)
     return d;
 }
 
+static char *normalize_prog_arg0(const char *s)
+{
+    if (!s || *s == '\0') {
+        return xstrdup("");
+    }
+
+    /* If the user already provided a path, keep it. */
+    if (strchr(s, '/')) {
+        return xstrdup(s);
+    }
+
+    /* If an executable exists in the current directory, prefer it as ./name. */
+    if (access(s, X_OK) == 0) {
+        size_t len = strlen(s);
+        char *d = xcalloc(len + 3, 1); /* "./" + s + NUL */
+        d[0] = '.';
+        d[1] = '/';
+        memcpy(d + 2, s, len + 1);
+        return d;
+    }
+
+    /* Otherwise, leave as-is so execvp can search PATH. */
+    return xstrdup(s);
+}
+
 process_t *process_create(char *const tokens[], int argc)
 {
     process_t *p = xcalloc(1, sizeof(*p));
@@ -69,7 +95,11 @@ process_t *process_create(char *const tokens[], int argc)
 
     p->argv = xcalloc((size_t)argc + 1, sizeof(char *));
     for (int i = 0; i < argc; i++) {
-        p->argv[i] = xstrdup(tokens[i]);
+        if (i == 0) {
+            p->argv[i] = normalize_prog_arg0(tokens[i]);
+        } else {
+            p->argv[i] = xstrdup(tokens[i]);
+        }
     }
     p->argv[argc] = NULL;
 

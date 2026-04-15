@@ -8,9 +8,9 @@
 
 typedef struct process {
     pid_t pid;
-    char **argv;    /* NULL-terminated argv for execvp */
-    int argc;       /* number of entries in argv excluding NULL */
-    int is_stopped; /* 1 if currently stopped, 0 if running */
+    char **argv;
+    int argc; 
+    int is_stopped;
 } process_t;
 
 #endif
