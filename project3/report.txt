@@ -1,0 +1,98 @@
+Project 3 Report: Virtual Memory Simulator (MemSim)
+
+Overview
+This project implements a virtual memory simulator that translates 16-bit logical
+addresses into physical addresses and simulates the major memory translation
+structures: a TLB, a page table, a backing store, and a finite-sized physical
+memory. Only read operations are simulated.
+
+Logical Address Format
+Each logical address is treated as 16 bits and split into:
+- page number: upper 8 bits (0..255)
+- offset     : lower 8 bits (0..255)
+Page size equals frame size: 256 bytes.
+
+Core Components
+
+1) TLB (tlb.py)
+The Translation Lookaside Buffer is modeled as a fixed-size set of 16 slots.
+Each slot stores a (page, frame) mapping. Empty slots are marked using -1.
+The TLB supports:
+- lookup(page): linear scan of 16 entries and returns the frame or -1
+- replace(page, frame): FIFO insertion using a rotating pointer next_index
+- invalidate(page): removes an entry when a page is evicted from memory
+
+Replacement inside the TLB is always FIFO (as specified), independent of the page
+replacement algorithm used for physical memory.
+
+2) Page Table (page_table.py)
+The page table is modeled using two parallel arrays indexed by page number:
+- frames[page] stores the physical frame number (or -1 if not loaded)
+- loaded[page] is a loaded-bit (0/1)
+The page table supports:
+- lookup(page): returns the frame if loaded, else -1
+- set_mapping(page, frame): marks the page as loaded into the given frame
+- invalidate(page): marks the page as not loaded
+
+The page table is used on a TLB miss to determine whether the page is resident.
+
+3) Backing Store (backing_store.py)
+The backing store is a binary file named BACKING_STORE.bin (64 KiB). The file is
+treated as 256 pages of 256 bytes each. The BackingStore class:
+- keeps the file open for random-access reads
+- read_page(page): seeks to page*256 and reads exactly 256 bytes
+
+On a page fault, the simulator reads the requested page from the backing store.
+
+4) Physical Memory (physical_memory.py)
+Physical memory is represented as a list of bytearrays, one per frame.
+The PhysicalMemory class supports:
+- load_frame(frame, data): overwrite a frame with a 256-byte page
+- read_byte(frame, offset): return the byte at an offset (0..255)
+- get_frame_bytes(frame): returns the 256-byte frame contents (for printing)
+
+Physical memory does not track pages itself; the simulator maintains a
+frame_to_page mapping.
+
+5) Page Replacement Strategies (page_replacement.py)
+When a page fault occurs and no free frames remain, the simulator must choose a
+victim frame based on the selected page replacement algorithm (PRA). The code
+uses three strategy classes with a shared interface:
+- on_reference(i, page): called once per reference for bookkeeping
+- on_access(frame): called whenever a frame is used
+- pick_victim(frame_to_page): returns the frame index to evict
+
+Algorithms implemented:
+- FIFOReplacer: evicts frames in round-robin FIFO order using a pointer.
+- LRUReplacer: tracks last_used time per frame (timestamp-based LRU).
+- OPTReplacer: uses full lookahead over the reference sequence and evicts the
+  page whose next use is farthest in the future (or never used again).
+
+Main Control Flow (memSim.py)
+For each logical address:
+1) Split logical address into (page, offset)
+2) Query the TLB. On hit, use the returned frame.
+3) On TLB miss, query the page table:
+   - If loaded: use frame and insert into TLB.
+   - If not loaded: page fault.
+4) On a page fault:
+   - If a free frame exists, use it.
+   - Otherwise, select a victim frame using the selected PRA.
+   - If evicting an old page, invalidate its page table entry and invalidate any
+     TLB entry for that old page.
+   - Read the new page from BACKING_STORE.bin and load it into the chosen frame.
+   - Update page table and TLB.
+5) Read the value from physical memory at (frame, offset). The printed value is
+   interpreted as a signed 8-bit integer.
+6) Print output line:
+   logical_address, value, frame_number, frame_contents_hex
+
+After processing all addresses, the simulator prints:
+- Number of Translated Addresses
+- Page Faults and Page Fault Rate
+- TLB Hits, TLB Misses, and TLB Hit Rate
+
+Validation
+The FIFO behavior for the provided sample (addresses.txt) was validated to match
+addresses-correct.txt exactly. Additional page-fault counts were validated
+against the provided Program 3 Test Cases document for FIFO, LRU, and OPT.
