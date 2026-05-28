@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+
+# // Disk Scheduling Simulator (CPE 453)
+
+import sys
+import random
+
+
+class DiskModel:
+    # // Simple fixed-size disk model
+    def __init__(self, min_cyl=0, max_cyl=4999):
+        self.min_cyl = min_cyl
+        self.max_cyl = max_cyl
+
+
+class RequestSequence:
+    # // Holds the access sequence
+    def __init__(self, requests):
+        self.requests = list(requests)
+
+    @staticmethod
+    def from_file(path, disk):
+        reqs = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                s = line.strip()
+                if not s:
+                    continue
+                v = int(s)
+                if v < disk.min_cyl or v > disk.max_cyl:
+                    raise ValueError(f"request out of range: {v}")
+                reqs.append(v)
+        return RequestSequence(reqs)
+
+    @staticmethod
+    def random(n, disk):
+        return RequestSequence([random.randint(disk.min_cyl, disk.max_cyl) for _ in range(n)])
+
+
+class Scheduler:
+    # // Base class for algorithms
+    name = ""
+
+    def run(self, start, direction, requests, disk):
+        raise NotImplementedError
+
+
+class FCFSScheduler(Scheduler):
+    # // First-Come First-Served
+    name = "FCFS"
+
+    def run(self, start, direction, requests, disk):
+        cur, total = start, 0
+        for r in requests:
+            total += abs(cur - r)
+            cur = r
+        return total
+
+
+class SSTFScheduler(Scheduler):
+    # // Shortest Seek Time First
+    name = "SSTF"
+
+    def run(self, start, direction, requests, disk):
+        pending = list(requests)
+        cur, total = start, 0
+        while pending:
+            _, nxt = min((abs(r - cur), r) for r in pending)
+            total += abs(cur - nxt)
+            cur = nxt
+            pending.remove(nxt)
+        return total
+
+
+class SCANScheduler(Scheduler):
+    # // Elevator (SCAN)
+    name = "SCAN"
+
+    def run(self, start, direction, requests, disk):
+        cur, total = start, 0
+        left = sorted([r for r in requests if r < cur], reverse=True)
+        right = sorted([r for r in requests if r >= cur])
+
+        if direction > 0:
+            for r in right:
+                total += abs(cur - r)
+                cur = r
+            total += abs(cur - disk.max_cyl)
+            cur = disk.max_cyl
+            for r in left:
+                total += abs(cur - r)
+                cur = r
+        else:
+            for r in left:
+                total += abs(cur - r)
+                cur = r
+            total += abs(cur - disk.min_cyl)
+            cur = disk.min_cyl
+            for r in right:
+                total += abs(cur - r)
+                cur = r
+
+        return total
+
+
+class CSCANScheduler(Scheduler):
+    # // Circular SCAN
+    name = "C-SCAN"
+
+    def run(self, start, direction, requests, disk):
+        cur, total = start, 0
+        left = sorted([r for r in requests if r < cur])
+        right = sorted([r for r in requests if r >= cur])
+
+        if direction > 0:
+            for r in right:
+                total += abs(cur - r)
+                cur = r
+            total += abs(cur - disk.max_cyl)
+            cur = disk.max_cyl
+            total += abs(disk.max_cyl - disk.min_cyl)
+            cur = disk.min_cyl
+            for r in left:
+                total += abs(cur - r)
+                cur = r
+        else:
+            for r in reversed(left):
+                total += abs(cur - r)
+                cur = r
+            total += abs(cur - disk.min_cyl)
+            cur = disk.min_cyl
+            total += abs(disk.max_cyl - disk.min_cyl)
+            cur = disk.max_cyl
+            for r in reversed(right):
+                total += abs(cur - r)
+                cur = r
+
+        return total
+
+
+class LOOKScheduler(Scheduler):
+    # // LOOK (like SCAN but stops at last request)
+    name = "LOOK"
+
+    def run(self, start, direction, requests, disk):
+        cur, total = start, 0
+        left = sorted([r for r in requests if r < cur], reverse=True)
+        right = sorted([r for r in requests if r >= cur])
+
+        if direction > 0:
+            for r in right:
+                total += abs(cur - r)
+                cur = r
+            for r in left:
+                total += abs(cur - r)
+                cur = r
+        else:
+            for r in left:
+                total += abs(cur - r)
+                cur = r
+            for r in right:
+                total += abs(cur - r)
+                cur = r
+
+        return total
+
+
+class CLOOKScheduler(Scheduler):
+    # // Circular LOOK
+    name = "C-LOOK"
+
+    def run(self, start, direction, requests, disk):
+        cur, total = start, 0
+        left = sorted([r for r in requests if r < cur])
+        right = sorted([r for r in requests if r >= cur])
+
+        if direction > 0:
+            for r in right:
+                total += abs(cur - r)
+                cur = r
+            if left:
+                total += abs(cur - left[0])
+                cur = left[0]
+                for r in left[1:]:
+                    total += abs(cur - r)
+                    cur = r
+        else:
+            for r in reversed(left):
+                total += abs(cur - r)
+                cur = r
+            if right:
+                total += abs(cur - right[-1])
+                cur = right[-1]
+                for r in reversed(right[:-1]):
+                    total += abs(cur - r)
+                    cur = r
+
+        return total
+
+
+class Simulator:
+    # // Runs all schedulers and prints required output
+    def __init__(self, disk, schedulers):
+        self.disk = disk
+        self.schedulers = list(schedulers)
+
+    def run(self, start, direction, sequence):
+        for s in self.schedulers:
+            total = s.run(start, direction, sequence.requests, self.disk)
+            print(f"{s.name} {total}")
+
+
+class ArgParser:
+    # // Minimal CLI parsing
+    def parse(self, argv, disk):
+        if len(argv) not in (2, 3):
+            raise ValueError("usage: diskSim INITIAL_POSITION [ACCESS_SEQUENCE_FILE]")
+
+        raw = argv[1]
+        direction = -1 if raw.startswith("-") else 1
+        pos = int(raw)
+        start = abs(pos)
+        if start < disk.min_cyl or start > disk.max_cyl:
+            raise ValueError("INITIAL_POSITION out of range")
+
+        if len(argv) == 3:
+            seq = RequestSequence.from_file(argv[2], disk)
+        else:
+            seq = RequestSequence.random(100, disk)
+
+        return start, direction, seq
+
+
+def main(argv):
+    disk = DiskModel(0, 4999)
+
+    try:
+        start, direction, seq = ArgParser().parse(argv, disk)
+    except Exception as e:
+        print(e, file=sys.stderr)
+        return 1
+
+    sim = Simulator(
+        disk,
+        [
+            FCFSScheduler(),
+            SSTFScheduler(),
+            SCANScheduler(),
+            CSCANScheduler(),
+            LOOKScheduler(),
+            CLOOKScheduler(),
+        ],
+    )
+    sim.run(start, direction, seq)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
